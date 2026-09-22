@@ -17,7 +17,7 @@ def send_telegram(msg):
   payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
   try:
     requests.post(url, json=payload, timeout=10)
-    print("Gold alert sent to Telegram!")
+    print("Telegram message sent!")
   except Exception as e:
     print(f"Telegram error: {e}")
 
@@ -25,9 +25,9 @@ def send_telegram(msg):
 def check_gold_setup():
   print("Scanning XAU/USD (Gold) 15m chart...")
 
-  # GC=F is Gold Continuous Futures on COMEX (Spot Gold tracking)
+  # COMEX Gold Continuous Futures (tracks spot Gold)
   df = yf.download(
-      "GC=F", period="3d", interval="15m", progress=False, auto_adjust=True
+      "GC=F", period="5d", interval="15m", progress=False, auto_adjust=True
   )
   if df is None or len(df) < 30:
     print("Not enough data received for Gold.")
@@ -38,6 +38,9 @@ def check_gold_setup():
 
   # Convert timezone to IST (India Time)
   df.index = df.index.tz_convert("Asia/Kolkata")
+
+  # 20-Period Volume SMA on 15m candles
+  df["Vol_SMA20"] = df["Volume"].rolling(window=20).mean()
 
   now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
   today = now.date()
@@ -54,35 +57,32 @@ def check_gold_setup():
       & (df_today.index.time < datetime.time(13, 0))
   ]
 
-  if len(asian_candles) < 4:
-    print("Asian session in progress, waiting for range formation...")
-    return
+  if len(asian_candles) >= 4:
+    asian_high = float(asian_candles["High"].max())
+    asian_low = float(asian_candles["Low"].min())
+  else:
+    asian_high = float(df_today["High"].max())
+    asian_low = float(df_today["Low"].min())
 
-  asian_high = float(asian_candles["High"].max())
-  asian_low = float(asian_candles["Low"].min())
-
-  # Last completed candle
+  # Last completed 15m candle
   last_candle = df.iloc[-1]
   curr_high = float(last_candle["High"])
   curr_low = float(last_candle["Low"])
   curr_close = float(last_candle["Close"])
   curr_open = float(last_candle["Open"])
+  curr_vol = float(last_candle["Volume"])
+  curr_vol_sma = float(last_candle["Vol_SMA20"])
 
-  current_time = now.time()
-  print(f"Asian High: ${asian_high:.2f} | Asian Low: ${asian_low:.2f}")
-  print(f"Current Gold Price: ${curr_close:.2f}")
+  vol_mult = curr_vol / curr_vol_sma if curr_vol_sma > 0 else 0
+  time_str = now.strftime("%I:%M %p IST")
 
-  # Active Trading Sessions: London & NY (1:00 PM to 10:30 PM IST)
-  if not (datetime.time(13, 0) <= current_time <= datetime.time(22, 30)):
-    print("Outside London / NY active session hours.")
-    # For testing outside hours, send status
-    return
-
-  # --- SELL SETUP: Asian High Sweep & Rejection ---
+  # --- SIGNAL CHECKS ---
+  # 1. SELL SETUP: Swept Asian High + Bearish Candle + Volume > 1.8x SMA
   if (
       curr_high > asian_high
       and curr_close < asian_high
       and curr_close < curr_open
+      and vol_mult >= 1.8
   ):
     sl = round(curr_high + 1.50, 2)
     entry = round(curr_close, 2)
@@ -90,20 +90,22 @@ def check_gold_setup():
     tp = round(entry - (risk * 2), 2)
 
     msg = (
-        f"🚨 <b>XAU/USD (GOLD) INTRADAY SELL SIGNAL</b> 📉\n\n"
-        f"📍 <b>Setup:</b> Asian High Liquidity Sweep Rejection\n"
-        f"• <b>Asian High:</b> ${asian_high:.2f}\n"
-        f"• <b>Asian Low:</b> ${asian_low:.2f}\n\n"
+        f"🚨 <b>XAU/USD (GOLD) SELL SIGNAL</b> 📉\n\n"
+        f"📍 <b>Setup:</b> Asian High Sweep + Volume Surge\n"
+        f"• <b>Volume Spike:</b> {vol_mult:.1f}x (vs 20 SMA)\n\n"
         f"🎯 <b>Entry:</b> ${entry:.2f}\n"
         f"🛑 <b>Stop Loss (SL):</b> ${sl:.2f} (${risk:.2f} risk)\n"
         f"🏁 <b>Target (TP):</b> ${tp:.2f} (1:2 RR)\n"
-        f"⚖️ <b>Recommended Lot:</b> 0.01 lot"
+        f"⚖️ <b>Recommended:</b> 0.01 lot"
     )
     send_telegram(msg)
 
-  # --- BUY SETUP: Asian Low Sweep & Rejection ---
+  # 2. BUY SETUP: Swept Asian Low + Bullish Candle + Volume > 1.8x SMA
   elif (
-      curr_low < asian_low and curr_close > asian_low and curr_close > curr_open
+      curr_low < asian_low
+      and curr_close > asian_low
+      and curr_close > curr_open
+      and vol_mult >= 1.8
   ):
     sl = round(curr_low - 1.50, 2)
     entry = round(curr_close, 2)
@@ -111,18 +113,28 @@ def check_gold_setup():
     tp = round(entry + (risk * 2), 2)
 
     msg = (
-        f"🚨 <b>XAU/USD (GOLD) INTRADAY BUY SIGNAL</b> 📈\n\n"
-        f"📍 <b>Setup:</b> Asian Low Liquidity Sweep Rejection\n"
-        f"• <b>Asian High:</b> ${asian_high:.2f}\n"
-        f"• <b>Asian Low:</b> ${asian_low:.2f}\n\n"
+        f"🚨 <b>XAU/USD (GOLD) BUY SIGNAL</b> 📈\n\n"
+        f"📍 <b>Setup:</b> Asian Low Sweep + Volume Surge\n"
+        f"• <b>Volume Spike:</b> {vol_mult:.1f}x (vs 20 SMA)\n\n"
         f"🎯 <b>Entry:</b> ${entry:.2f}\n"
         f"🛑 <b>Stop Loss (SL):</b> ${sl:.2f} (${risk:.2f} risk)\n"
         f"🏁 <b>Target (TP):</b> ${tp:.2f} (1:2 RR)\n"
-        f"⚖️ <b>Recommended Lot:</b> 0.01 lot"
+        f"⚖️ <b>Recommended:</b> 0.01 lot"
     )
     send_telegram(msg)
+
+  # 3. IF NO SIGNAL: Send Status Update so you know bot is actively running
   else:
-    print("No sweep condition met in current 15m candle.")
+    status_msg = (
+        f"📊 <b>XAU/USD (Gold) 15M Live Status</b>\n"
+        f"🕒 <b>Time:</b> {time_str}\n\n"
+        f"• <b>Current Price:</b> ${curr_close:.2f}\n"
+        f"• <b>Asian Range:</b> ${asian_low:.2f} - ${asian_high:.2f}\n"
+        f"• <b>15M Volume:</b> {vol_mult:.1f}x SMA\n"
+        f"• <b>Signal Status:</b> ⏳ Waiting for London/NY Sweep & Volume"
+        f" Injection"
+    )
+    send_telegram(status_msg)
 
 
 if __name__ == "__main__":
