@@ -9,11 +9,16 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 WATCHLIST = {
-    "GC=F": {"name": "XAU/USD (GOLD)", "buffer": 1.50, "dec": 2},
-    "GBPUSD=X": {"name": "GBP/USD", "buffer": 0.0015, "dec": 4},
-    "EURUSD=X": {"name": "EUR/USD", "buffer": 0.0012, "dec": 4},
-    "USDJPY=X": {"name": "USD/JPY", "buffer": 0.15, "dec": 2},
-    "GBPJPY=X": {"name": "GBP/JPY", "buffer": 0.18, "dec": 2},
+    "GC=F": {"name": "XAU/USD (Gold)", "buffer": 1.50, "dec": 2, "sym": "$"},
+    "GBPUSD=X": {
+        "name": "GBP/USD (Cable)",
+        "buffer": 0.0015,
+        "dec": 4,
+        "sym": "",
+    },
+    "EURUSD=X": {"name": "EUR/USD", "buffer": 0.0012, "dec": 4, "sym": ""},
+    "USDJPY=X": {"name": "USD/JPY", "buffer": 0.15, "dec": 2, "sym": ""},
+    "GBPJPY=X": {"name": "GBP/JPY", "buffer": 0.18, "dec": 2, "sym": ""},
 }
 
 
@@ -31,7 +36,7 @@ def send_telegram(msg):
 
 
 def scan_forex_and_gold():
-  print("Scanning Forex & Gold instruments...")
+  print("Scanning Forex & Gold...")
   kolkata_tz = pytz.timezone("Asia/Kolkata")
   now = datetime.datetime.now(kolkata_tz)
   today = now.date()
@@ -39,32 +44,28 @@ def scan_forex_and_gold():
   time_str = now.strftime("%I:%M %p IST")
 
   alerts = []
-  status_lines = []
+  status_blocks = []
 
   for ticker, info in WATCHLIST.items():
     try:
-      # Download 15m data
       df = yf.download(
           ticker, period="5d", interval="15m", progress=False, auto_adjust=True
       )
       if df is None or len(df) < 10:
-        print(f"No data for {ticker}")
         continue
 
-      # Multi-index column fix
       if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-      # --- ROBUST TIMEZONE FIX ---
+      # Timezone check
       if df.index.tz is None:
         df.index = df.index.tz_localize("UTC").tz_convert(kolkata_tz)
       else:
         df.index = df.index.tz_convert(kolkata_tz)
 
-      # Extract today's candles
+      # Today's candles
       df_today = df[df.index.date == today]
       if df_today.empty:
-        # Fallback to last available day if early morning
         last_date = df.index[-1].date()
         df_today = df[df.index.date == last_date]
 
@@ -90,18 +91,23 @@ def scan_forex_and_gold():
       dec = info["dec"]
       buffer_val = info["buffer"]
       pair_name = info["name"]
+      sym = info["sym"]
 
-      status_lines.append(
-          f"• <b>{pair_name}:</b> {curr_close:.{dec}f} (Asian Range:"
-          f" {asian_low:.{dec}f} - {asian_high:.{dec}f})"
+      # Individual pair block
+      block = (
+          f"🔥 <b>{pair_name}</b>\n"
+          f"💰 <b>LTP:</b> {sym}{curr_close:.{dec}f}\n"
+          f"🎯 <b>Asian Range:</b> {sym}{asian_low:.{dec}f} ➔"
+          f" {sym}{asian_high:.{dec}f}"
       )
+      status_blocks.append(block)
 
-      # Active London & NY Trading Sessions (1:00 PM - 10:30 PM IST)
+      # Active Trading Hours: London & NY (1:00 PM - 10:30 PM IST)
       is_active_session = datetime.time(13, 0) <= current_time <= datetime.time(
           22, 30
       )
 
-      # 1. SELL SETUP: Swept High & Bearish Rejection
+      # SELL SETUP
       if (
           is_active_session
           and curr_high > asian_high
@@ -111,19 +117,22 @@ def scan_forex_and_gold():
         sl = round(curr_high + buffer_val, dec)
         entry = round(curr_close, dec)
         risk = round(abs(sl - entry), dec)
-        tp = round(entry - (risk * 2), dec)
+        tp1 = round(entry - (risk * 2), dec)
+        tp2 = round(entry - (risk * 3), dec)
 
         alerts.append(
-            f"🚨 <b>FOREX SELL ALERT: #{pair_name}</b> 📉\n\n"
-            f"📍 <b>Setup:</b> Asian High Sweep Rejection\n"
-            f"• <b>Asian Range:</b> {asian_low:.{dec}f} - {asian_high:.{dec}f}\n\n"
-            f"🎯 <b>Entry:</b> {entry:.{dec}f}\n"
-            f"🛑 <b>Stop Loss (SL):</b> {sl:.{dec}f} (Risk: {risk:.{dec}f})\n"
-            f"🏁 <b>Target (TP):</b> {tp:.{dec}f} (1:2 RR)\n"
-            f"⚖️ <b>Recommended:</b> 0.01 lot"
+            f"🚀🚀 <b>NEW TRADE ALERT</b> 🚀🚀\n\n"
+            f"🔥 <b>{pair_name}</b>\n"
+            f"🔴 <b>DIRECTION: SELL / SHORT</b>\n\n"
+            f"🎯 <b>Entry:</b> {sym}{entry:.{dec}f}\n"
+            f"🛑 <b>Stop Loss:</b> {sym}{sl:.{dec}f}\n"
+            f"🚀 <b>Target 1:</b> {sym}{tp1:.{dec}f} (1:2 RR)\n"
+            f"🔥🔥 <b>Target 2:</b> {sym}{tp2:.{dec}f} (1:3 RR)\n\n"
+            f"⚡ <b>Setup:</b> Asian High Sweep Rejection\n"
+            f"💼 <b>Lot:</b> 0.01 lot"
         )
 
-      # 2. BUY SETUP: Swept Low & Bullish Rejection
+      # BUY SETUP
       elif (
           is_active_session
           and curr_low < asian_low
@@ -133,32 +142,39 @@ def scan_forex_and_gold():
         sl = round(curr_low - buffer_val, dec)
         entry = round(curr_close, dec)
         risk = round(abs(entry - sl), dec)
-        tp = round(entry + (risk * 2), dec)
+        tp1 = round(entry + (risk * 2), dec)
+        tp2 = round(entry + (risk * 3), dec)
 
         alerts.append(
-            f"🚨 <b>FOREX BUY ALERT: #{pair_name}</b> 📈\n\n"
-            f"📍 <b>Setup:</b> Asian Low Sweep Rejection\n"
-            f"• <b>Asian Range:</b> {asian_low:.{dec}f} - {asian_high:.{dec}f}\n\n"
-            f"🎯 <b>Entry:</b> {entry:.{dec}f}\n"
-            f"🛑 <b>Stop Loss (SL):</b> {sl:.{dec}f} (Risk: {risk:.{dec}f})\n"
-            f"🏁 <b>Target (TP):</b> {tp:.{dec}f} (1:2 RR)\n"
-            f"⚖️ <b>Recommended:</b> 0.01 lot"
+            f"🚀🚀 <b>NEW TRADE ALERT</b> 🚀🚀\n\n"
+            f"🔥 <b>{pair_name}</b>\n"
+            f"🟢 <b>DIRECTION: BUY / LONG</b>\n\n"
+            f"🎯 <b>Entry:</b> {sym}{entry:.{dec}f}\n"
+            f"🛑 <b>Stop Loss:</b> {sym}{sl:.{dec}f}\n"
+            f"🚀 <b>Target 1:</b> {sym}{tp1:.{dec}f} (1:2 RR)\n"
+            f"🔥🔥 <b>Target 2:</b> {sym}{tp2:.{dec}f} (1:3 RR)\n\n"
+            f"⚡ <b>Setup:</b> Asian Low Sweep Rejection\n"
+            f"💼 <b>Lot:</b> 0.01 lot"
         )
 
     except Exception as e:
       print(f"Error checking {ticker}: {e}")
 
-  # Send Telegram Message
   if alerts:
     full_alert = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(alerts)
     send_telegram(full_alert)
   else:
+    # Space & Divider line between every pair
+    divider = "\n\n────────────────────\n\n"
+    joined_blocks = divider.join(status_blocks)
+
     msg = (
-        f"📊 <b>Forex & Gold Live Monitor</b>\n"
-        f"🕒 <b>Time:</b> {time_str}\n\n"
-        + "\n".join(status_lines)
-        + "\n\n⏳ <b>Status:</b> Asian range forming. Waiting for London/NY"
-        " session (1:00 PM IST onwards)."
+        f"🚀 <b>TRADING TOP • LIVE RADAR</b>\n"
+        f"⏰ <b>{time_str}</b>\n\n"
+        f"────────────────────\n\n"
+        f"{joined_blocks}\n\n"
+        f"────────────────────\n\n"
+        f"⏳ <b>Asian range forming. London session starts at 1:00 PM IST!</b>"
     )
     send_telegram(msg)
 
