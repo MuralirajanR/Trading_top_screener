@@ -119,7 +119,7 @@ def scan_forex_and_gold():
       emoji = info["emoji"]
       sym = info["sym"]
 
-      # Radar Block
+      # Clean Individual Block
       block = (
           f"{emoji} <b>{pair_name}</b>\n"
           f"├ 💎 <b>Price:</b> {sym}{curr_close:,.{dec}f}\n"
@@ -147,19 +147,19 @@ def scan_forex_and_gold():
         tp2 = round(entry - (risk * 3), dec)
 
         alerts.append(
-            f"🔥 ══════ 🚀 <b>TRADE SIGNAL</b> 🚀 ══════ 🔥\n\n"
+            f"🔥 ════ 🚀 <b>TRADE SIGNAL</b> 🚀 ════ 🔥\n\n"
             f"💎 <b>ASSET:</b> {pair_name}\n"
             f"🎯 <b>TYPE:</b> 🔴 <b>STRONG SELL (SHORT)</b>\n"
             f"⚡ <b>SETUP:</b> Asian High Sweep Rejection 🔥\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
             f"📍 <b>ENTRY ZONE :</b> {sym}{entry:,.{dec}f}\n"
             f"🛑 <b>STOP LOSS  :</b> {sym}{sl:,.{dec}f} (Risk: {risk:.{dec}f})\n"
             f"🏁 <b>TARGET 1   :</b> {sym}{tp1:,.{dec}f} (1:2 RR) 🚀🚀\n"
             f"🏆 <b>TARGET 2   :</b> {sym}{tp2:,.{dec}f} (Runner) 💰\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
             f"💼 <b>RISK MGT   :</b> 0.01 Lot per $200\n"
             f"⏰ <b>TIMEFRAME  :</b> 15M Execution\n"
-            f"🔥 ═══════ <b>TRADING TOP</b> ═══════ 🔥"
+            f"🔥 ═════ <b>TRADING TOP</b> ═════ 🔥"
         )
 
       # BUY SETUP
@@ -176,37 +176,40 @@ def scan_forex_and_gold():
         tp2 = round(entry + (risk * 3), dec)
 
         alerts.append(
-            f"🔥 ══════ 🚀 <b>TRADE SIGNAL</b> 🚀 ══════ 🔥\n\n"
+            f"🔥 ════ 🚀 <b>TRADE SIGNAL</b> 🚀 ════ 🔥\n\n"
             f"💎 <b>ASSET:</b> {pair_name}\n"
             f"🎯 <b>TYPE:</b> 🟢 <b>STRONG BUY (LONG)</b>\n"
             f"⚡ <b>SETUP:</b> Asian Low Sweep Rejection 🔥\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
             f"📍 <b>ENTRY ZONE :</b> {sym}{entry:,.{dec}f}\n"
             f"🛑 <b>STOP LOSS  :</b> {sym}{sl:,.{dec}f} (Risk: {risk:.{dec}f})\n"
             f"🏁 <b>TARGET 1   :</b> {sym}{tp1:,.{dec}f} (1:2 RR) 🚀🚀\n"
             f"🏆 <b>TARGET 2   :</b> {sym}{tp2:,.{dec}f} (Runner) 💰\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
             f"💼 <b>RISK MGT   :</b> 0.01 Lot per $200\n"
             f"⏰ <b>TIMEFRAME  :</b> 15M Execution\n"
-            f"🔥 ═══════ <b>TRADING TOP</b> ═══════ 🔥"
+            f"🔥 ═════ <b>TRADING TOP</b> ═════ 🔥"
         )
 
     except Exception as e:
       print(f"Error checking {ticker}: {e}")
 
   if alerts:
-    full_alert = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(alerts)
+    full_alert = "\n\n━━━━━━━━━━━━━━━━━━━\n\n".join(alerts)
     send_telegram(full_alert)
   else:
-    joined_blocks = "\n\n".join(status_blocks)
+    # Clean divider line between every pair
+    divider = "\n\n━━━━━━━━━━━━━━━━━━━\n\n"
+    joined_blocks = divider.join(status_blocks)
+
     msg = (
-        f"⚡ ══════ 🚀 <b>TRADING TOP RADAR</b> 🚀 ══════ ⚡\n"
-        f"🕒 <b>Time:</b> {time_str} | 🌐 <b>Asia Session</b>\n\n"
+        f"🚀 <b>TRADING TOP RADAR</b> 🚀\n"
+        f"🕒 <b>{time_str}</b> | 🌐 <b>Asia Session</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
         f"{joined_blocks}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
         f"⏳ <b>STATUS:</b> Asian liquidity building up 🔥\n"
-        f"🚀 <b>Next Action:</b> London Open at 1:00 PM IST!\n"
-        f"⚡ ════════════════════════════ ⚡"
+        f"🚀 <b>Next Action:</b> London Open at 1:00 PM IST!"
     )
     send_telegram(msg)
 
