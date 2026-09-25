@@ -830,4 +830,63 @@ def run_scanner():
                         body_ratio,
                     )
 
-                   
+                    alerts.append(
+                        alert
+                    )
+
+                    print(
+                        f"BUY setup found: "
+                        f"{ticker}"
+                    )
+
+            else:
+
+                print(
+                    f"No setup: "
+                    f"{ticker}"
+                )
+
+
+        except Exception as e:
+
+            print(
+                f"Error scanning "
+                f"{ticker}: {e}"
+            )
+
+
+    # =====================================================
+    # SEND SIGNALS
+    # =====================================================
+
+    if alerts:
+
+        separator = (
+            "\n\n"
+            "━━━━━━━━━━━━━━━━━━"
+            "\n\n"
+        )
+
+        final_message = (
+            separator.join(alerts)
+        )
+
+        send_telegram(
+            final_message
+        )
+
+    else:
+
+        print(
+            "No valid trade setup. "
+            "Telegram signal not sent."
+        )
+
+
+# =========================================================
+# START BOT
+# =========================================================
+
+if __name__ == "__main__":
+
+    run_scanner()
