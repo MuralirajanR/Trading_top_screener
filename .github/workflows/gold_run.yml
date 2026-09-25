@@ -2,9 +2,12 @@ name: XAUUSD Gold 15M Screener
 
 on:
   schedule:
-    # Runs every 30 minutes between 1:00 PM IST and 10:30 PM IST (07:30 UTC to 17:00 UTC) Mon-Fri
+    # Mon-Fri, every 30 minutes
+    # 1:00 PM IST to 10:30 PM IST
     - cron: '*/30 7-17 * * 1-5'
-  workflow_dispatch: # Manual test-kaga
+
+  # Manual Run button
+  workflow_dispatch:
 
 jobs:
   gold-job:
@@ -26,4 +29,4 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python xauusd_bot.py
+        run: python xauusd_bot_v2.py
