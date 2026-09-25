@@ -8,7 +8,7 @@ import yfinance as yf
 
 
 # =========================================================
-# TELEGRAM
+# TELEGRAM SETTINGS
 # =========================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -16,9 +16,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 IST = pytz.timezone("Asia/Kolkata")
 
-# Cloud Run-la TEST_MODE=true set pannina
-# active-session time bypass aagum.
-TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+# Cloud Run:
+# TEST_MODE=true  -> any time test run + Telegram test message
+# TEST_MODE=false -> normal production mode
+TEST_MODE = os.getenv("TEST_MODE", "false").strip().lower() == "true"
 
 
 # =========================================================
@@ -26,6 +27,7 @@ TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 # =========================================================
 
 WATCHLIST = {
+
     "GC=F": {
         "name": "XAU/USD (GOLD)",
         "emoji": "🥇",
@@ -74,7 +76,7 @@ WATCHLIST = {
 
 
 # =========================================================
-# TELEGRAM FUNCTION
+# TELEGRAM
 # =========================================================
 
 def send_telegram(message):
@@ -117,7 +119,7 @@ def send_telegram(message):
 
 
 # =========================================================
-# DATA CLEANING
+# CLEAN YFINANCE DATA
 # =========================================================
 
 def clean_data(df):
@@ -128,7 +130,7 @@ def clean_data(df):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    required = [
+    required_columns = [
         "Open",
         "High",
         "Low",
@@ -136,7 +138,7 @@ def clean_data(df):
     ]
 
     df = df.dropna(
-        subset=required
+        subset=required_columns
     ).copy()
 
     if df.index.tz is None:
@@ -169,6 +171,7 @@ def download_market_data(ticker):
         threads=False,
     )
 
+    # 60 days gives enough 1H candles for EMA200.
     df_1h = yf.download(
         ticker,
         period="60d",
@@ -194,10 +197,8 @@ def completed_candles(df, now, minutes):
         return df
 
     cutoff = (
-        now -
-        datetime.timedelta(
-            minutes=minutes
-        )
+        now
+        - datetime.timedelta(minutes=minutes)
     )
 
     return df[
@@ -207,7 +208,7 @@ def completed_candles(df, now, minutes):
 
 # =========================================================
 # 1H TREND
-# EMA 50 + EMA 200
+# EMA50 + EMA200
 # =========================================================
 
 def get_1h_trend(df):
@@ -220,31 +221,28 @@ def get_1h_trend(df):
             None,
         )
 
-    close = (
-        df["Close"]
-        .astype(float)
-    )
+    closes = df["Close"].astype(float)
 
     ema50 = (
-        close
+        closes
         .ewm(
             span=50,
-            adjust=False
+            adjust=False,
         )
         .mean()
     )
 
     ema200 = (
-        close
+        closes
         .ewm(
             span=200,
-            adjust=False
+            adjust=False,
         )
         .mean()
     )
 
     last_close = float(
-        close.iloc[-1]
+        closes.iloc[-1]
     )
 
     last_ema50 = float(
@@ -293,20 +291,20 @@ def candle_body_ratio(candle):
     open_price = float(candle["Open"])
     close = float(candle["Close"])
 
-    total_range = high - low
+    candle_range = high - low
 
-    if total_range <= 0:
-        return 0
+    if candle_range <= 0:
+        return 0.0
 
     body = abs(
         close - open_price
     )
 
-    return body / total_range
+    return body / candle_range
 
 
 # =========================================================
-# CREATE TRADE ALERT
+# CREATE TELEGRAM TRADE ALERT
 # =========================================================
 
 def create_alert(
@@ -331,20 +329,15 @@ def create_alert(
     if side == "BUY":
 
         direction = "🟢 BUY / LONG"
-
-        liquidity = (
-            "Asian LOW liquidity sweep"
-        )
+        liquidity = "Asian LOW liquidity sweep"
 
     else:
 
         direction = "🔴 SELL / SHORT"
-
-        liquidity = (
-            "Asian HIGH liquidity sweep"
-        )
+        liquidity = "Asian HIGH liquidity sweep"
 
     message = (
+
         f"{info['emoji']} "
         f"<b>{info['name']} TRADE SETUP</b>\n\n"
 
@@ -379,7 +372,10 @@ def create_alert(
         f"🏆 <b>TP2:</b> "
         f"{symbol}"
         f"{tp2:,.{decimals}f} "
-        f"(1:3 RR)\n\n"
+        f"(1:3 RR)\n"
+
+        f"⚠️ <b>RISK DISTANCE:</b> "
+        f"{risk:.{decimals}f}\n\n"
 
         f"🌏 <b>ASIAN LOW:</b> "
         f"{symbol}"
@@ -395,11 +391,14 @@ def create_alert(
         f"📊 <b>EMA200:</b> "
         f"{ema200:,.{decimals}f}\n\n"
 
-        f"🕒 "
-        f"{candle_time.strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
+        f"🕒 <b>SIGNAL CANDLE:</b> "
+        f"{candle_time.strftime('%d-%m-%Y %I:%M %p IST')}\n"
+
+        f"⏱ <b>TIMEFRAME:</b> "
+        f"15M closed candle\n\n"
 
         f"⚠️ <i>Alert only. "
-        f"Verify chart and manage risk.</i>"
+        f"Verify the chart and manage risk before trading.</i>"
     )
 
     return message
@@ -431,16 +430,20 @@ def run_scanner():
 
         print(
             "TEST MODE enabled. "
-            "Session restriction bypassed."
+            "Active-session restriction bypassed."
         )
 
         send_telegram(
+
             "🧪 <b>XAUUSD / FOREX BOT TEST</b>\n\n"
+
             "✅ Cloud Run working\n"
             "✅ Telegram connection working\n"
             "✅ TEST MODE enabled\n\n"
+
             f"🕒 "
             f"{now.strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
+
             "<i>This is only a test message. "
             "Not a trade signal.</i>"
         )
@@ -448,13 +451,13 @@ def run_scanner():
 
     # =====================================================
     # NORMAL ACTIVE SESSION
-    # 1:00 PM - 10:30 PM IST
+    # 1:00 PM - 11:30 PM IST
     # =====================================================
 
     elif not (
         datetime.time(13, 0)
         <= current_time
-        <= datetime.time(22, 30)
+        <= datetime.time(23, 30)
     ):
 
         print(
@@ -480,22 +483,32 @@ def run_scanner():
                 f"{info['name']}..."
             )
 
+
+            # =============================================
+            # DOWNLOAD DATA
+            # =============================================
+
             df15, df1h = (
                 download_market_data(
                     ticker
                 )
             )
 
+
+            # =============================================
+            # CLOSED CANDLES ONLY
+            # =============================================
+
             df15 = completed_candles(
                 df15,
                 now,
-                15
+                15,
             )
 
             df1h = completed_candles(
                 df1h,
                 now,
-                60
+                60,
             )
 
 
@@ -518,7 +531,7 @@ def run_scanner():
 
 
             # =============================================
-            # TODAY DATA
+            # CURRENT TRADING DAY
             # =============================================
 
             trading_date = (
@@ -531,17 +544,30 @@ def run_scanner():
             ]
 
 
+            if today.empty:
+
+                print(
+                    f"No current-day data: "
+                    f"{ticker}"
+                )
+
+                continue
+
+
             # =============================================
-            # ASIAN SESSION
+            # ASIAN SESSION RANGE
             # 05:30 AM - 01:00 PM IST
             # =============================================
 
             asian = today[
+
                 (
                     today.index.time
                     >= datetime.time(5, 30)
                 )
+
                 &
+
                 (
                     today.index.time
                     < datetime.time(13, 0)
@@ -583,6 +609,7 @@ def run_scanner():
             ).total_seconds() / 60
 
 
+            # Avoid signals from old candles.
             if age_minutes > 35:
 
                 print(
@@ -611,7 +638,7 @@ def run_scanner():
 
 
             # =============================================
-            # CANDLE STRENGTH
+            # CANDLE STRENGTH FILTER
             # =============================================
 
             body_ratio = (
@@ -628,7 +655,7 @@ def run_scanner():
             ):
 
                 print(
-                    f"Weak candle: "
+                    f"Weak / doji candle: "
                     f"{ticker}"
                 )
 
@@ -636,7 +663,7 @@ def run_scanner():
 
 
             # =============================================
-            # 1H TREND
+            # 1H EMA TREND
             # =============================================
 
             trend, ema50, ema200 = (
@@ -647,6 +674,11 @@ def run_scanner():
 
 
             if trend is None:
+
+                print(
+                    f"EMA data unavailable: "
+                    f"{ticker}"
+                )
 
                 continue
 
@@ -660,7 +692,11 @@ def run_scanner():
 
             # =============================================
             # SELL SETUP
-            # Asian High Sweep
+            #
+            # 1. 1H bearish trend
+            # 2. Price sweeps Asian high
+            # 3. Candle closes back below Asian high
+            # 4. Bearish rejection candle
             # =============================================
 
             if (
@@ -702,28 +738,40 @@ def run_scanner():
                         decimals
                     )
 
+                    alert = create_alert(
+
+                        info,
+                        "SELL",
+                        candle_time,
+                        asian_high,
+                        asian_low,
+                        entry,
+                        stop_loss,
+                        tp1,
+                        tp2,
+                        risk,
+                        ema50,
+                        ema200,
+                        body_ratio,
+                    )
+
                     alerts.append(
-                        create_alert(
-                            info,
-                            "SELL",
-                            candle_time,
-                            asian_high,
-                            asian_low,
-                            entry,
-                            stop_loss,
-                            tp1,
-                            tp2,
-                            risk,
-                            ema50,
-                            ema200,
-                            body_ratio,
-                        )
+                        alert
+                    )
+
+                    print(
+                        f"SELL setup found: "
+                        f"{ticker}"
                     )
 
 
             # =============================================
             # BUY SETUP
-            # Asian Low Sweep
+            #
+            # 1. 1H bullish trend
+            # 2. Price sweeps Asian low
+            # 3. Candle closes back above Asian low
+            # 4. Bullish rejection candle
             # =============================================
 
             elif (
@@ -765,61 +813,21 @@ def run_scanner():
                         decimals
                     )
 
-                    alerts.append(
-                        create_alert(
-                            info,
-                            "BUY",
-                            candle_time,
-                            asian_high,
-                            asian_low,
-                            entry,
-                            stop_loss,
-                            tp1,
-                            tp2,
-                            risk,
-                            ema50,
-                            ema200,
-                            body_ratio,
-                        )
+                    alert = create_alert(
+
+                        info,
+                        "BUY",
+                        candle_time,
+                        asian_high,
+                        asian_low,
+                        entry,
+                        stop_loss,
+                        tp1,
+                        tp2,
+                        risk,
+                        ema50,
+                        ema200,
+                        body_ratio,
                     )
 
-
-        except Exception as e:
-
-            print(
-                f"Error scanning "
-                f"{ticker}: {e}"
-            )
-
-
-    # =====================================================
-    # SEND SIGNALS
-    # =====================================================
-
-    if alerts:
-
-        final_message = (
-            "\n\n"
-            "━━━━━━━━━━━━━━━━━━"
-            "\n\n"
-        ).join(alerts)
-
-        send_telegram(
-            final_message
-        )
-
-    else:
-
-        print(
-            "No valid trade setup. "
-            "Telegram signal not sent."
-        )
-
-
-# =========================================================
-# START BOT
-# =========================================================
-
-if __name__ == "__main__":
-
-    run_scanner()
+                   
