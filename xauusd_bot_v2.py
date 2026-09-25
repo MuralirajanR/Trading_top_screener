@@ -55,4 +55,771 @@ WATCHLIST = {
 
     "USDJPY=X": {
         "name": "USD/JPY",
-        "
+        "emoji": "🇯🇵",
+        "buffer": 0.15,
+        "dec": 2,
+        "sym": "",
+        "min_body_ratio": 0.45,
+    },
+
+    "GBPJPY=X": {
+        "name": "GBP/JPY",
+        "emoji": "💴",
+        "buffer": 0.18,
+        "dec": 2,
+        "sym": "",
+        "min_body_ratio": 0.45,
+    },
+}
+
+
+# =========================================================
+# TELEGRAM FUNCTION
+# =========================================================
+
+def send_telegram(message):
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram secrets missing.")
+        return False
+
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=15,
+        )
+
+        response.raise_for_status()
+
+        print("Telegram message sent successfully.")
+
+        return True
+
+    except Exception as e:
+
+        print(f"Telegram error: {e}")
+
+        return False
+
+
+# =========================================================
+# DATA CLEANING
+# =========================================================
+
+def clean_data(df):
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    required = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+    ]
+
+    df = df.dropna(
+        subset=required
+    ).copy()
+
+    if df.index.tz is None:
+
+        df.index = (
+            df.index
+            .tz_localize("UTC")
+            .tz_convert(IST)
+        )
+
+    else:
+
+        df.index = df.index.tz_convert(IST)
+
+    return df
+
+
+# =========================================================
+# DOWNLOAD MARKET DATA
+# =========================================================
+
+def download_market_data(ticker):
+
+    df_15m = yf.download(
+        ticker,
+        period="5d",
+        interval="15m",
+        progress=False,
+        auto_adjust=True,
+        threads=False,
+    )
+
+    df_1h = yf.download(
+        ticker,
+        period="60d",
+        interval="60m",
+        progress=False,
+        auto_adjust=True,
+        threads=False,
+    )
+
+    return (
+        clean_data(df_15m),
+        clean_data(df_1h),
+    )
+
+
+# =========================================================
+# REMOVE CURRENT FORMING CANDLE
+# =========================================================
+
+def completed_candles(df, now, minutes):
+
+    if df.empty:
+        return df
+
+    cutoff = (
+        now -
+        datetime.timedelta(
+            minutes=minutes
+        )
+    )
+
+    return df[
+        df.index <= cutoff
+    ].copy()
+
+
+# =========================================================
+# 1H TREND
+# EMA 50 + EMA 200
+# =========================================================
+
+def get_1h_trend(df):
+
+    if len(df) < 200:
+
+        return (
+            None,
+            None,
+            None,
+        )
+
+    close = (
+        df["Close"]
+        .astype(float)
+    )
+
+    ema50 = (
+        close
+        .ewm(
+            span=50,
+            adjust=False
+        )
+        .mean()
+    )
+
+    ema200 = (
+        close
+        .ewm(
+            span=200,
+            adjust=False
+        )
+        .mean()
+    )
+
+    last_close = float(
+        close.iloc[-1]
+    )
+
+    last_ema50 = float(
+        ema50.iloc[-1]
+    )
+
+    last_ema200 = float(
+        ema200.iloc[-1]
+    )
+
+    if (
+        last_close > last_ema50
+        and
+        last_ema50 > last_ema200
+    ):
+
+        trend = "BULLISH"
+
+    elif (
+        last_close < last_ema50
+        and
+        last_ema50 < last_ema200
+    ):
+
+        trend = "BEARISH"
+
+    else:
+
+        trend = "NEUTRAL"
+
+    return (
+        trend,
+        last_ema50,
+        last_ema200,
+    )
+
+
+# =========================================================
+# CANDLE BODY STRENGTH
+# =========================================================
+
+def candle_body_ratio(candle):
+
+    high = float(candle["High"])
+    low = float(candle["Low"])
+    open_price = float(candle["Open"])
+    close = float(candle["Close"])
+
+    total_range = high - low
+
+    if total_range <= 0:
+        return 0
+
+    body = abs(
+        close - open_price
+    )
+
+    return body / total_range
+
+
+# =========================================================
+# CREATE TRADE ALERT
+# =========================================================
+
+def create_alert(
+    info,
+    side,
+    candle_time,
+    asian_high,
+    asian_low,
+    entry,
+    stop_loss,
+    tp1,
+    tp2,
+    risk,
+    ema50,
+    ema200,
+    body_ratio,
+):
+
+    decimals = info["dec"]
+    symbol = info["sym"]
+
+    if side == "BUY":
+
+        direction = "🟢 BUY / LONG"
+
+        liquidity = (
+            "Asian LOW liquidity sweep"
+        )
+
+    else:
+
+        direction = "🔴 SELL / SHORT"
+
+        liquidity = (
+            "Asian HIGH liquidity sweep"
+        )
+
+    message = (
+        f"{info['emoji']} "
+        f"<b>{info['name']} TRADE SETUP</b>\n\n"
+
+        f"🎯 <b>DIRECTION:</b> "
+        f"{direction}\n"
+
+        f"💧 <b>LIQUIDITY:</b> "
+        f"{liquidity} ✅\n"
+
+        f"📈 <b>1H EMA TREND:</b> "
+        f"{side} aligned ✅\n"
+
+        f"🕯 <b>15M REJECTION:</b> "
+        f"Confirmed ✅\n"
+
+        f"💪 <b>CANDLE BODY:</b> "
+        f"{body_ratio * 100:.0f}%\n\n"
+
+        f"📍 <b>ENTRY:</b> "
+        f"{symbol}"
+        f"{entry:,.{decimals}f}\n"
+
+        f"🛑 <b>STOP LOSS:</b> "
+        f"{symbol}"
+        f"{stop_loss:,.{decimals}f}\n"
+
+        f"🏁 <b>TP1:</b> "
+        f"{symbol}"
+        f"{tp1:,.{decimals}f} "
+        f"(1:2 RR)\n"
+
+        f"🏆 <b>TP2:</b> "
+        f"{symbol}"
+        f"{tp2:,.{decimals}f} "
+        f"(1:3 RR)\n\n"
+
+        f"🌏 <b>ASIAN LOW:</b> "
+        f"{symbol}"
+        f"{asian_low:,.{decimals}f}\n"
+
+        f"🌏 <b>ASIAN HIGH:</b> "
+        f"{symbol}"
+        f"{asian_high:,.{decimals}f}\n\n"
+
+        f"📊 <b>EMA50:</b> "
+        f"{ema50:,.{decimals}f}\n"
+
+        f"📊 <b>EMA200:</b> "
+        f"{ema200:,.{decimals}f}\n\n"
+
+        f"🕒 "
+        f"{candle_time.strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
+
+        f"⚠️ <i>Alert only. "
+        f"Verify chart and manage risk.</i>"
+    )
+
+    return message
+
+
+# =========================================================
+# MAIN SCANNER
+# =========================================================
+
+def run_scanner():
+
+    now = datetime.datetime.now(IST)
+
+    current_time = now.time()
+
+    print(
+        "Bot started:",
+        now.strftime(
+            "%d-%m-%Y %I:%M:%S %p IST"
+        )
+    )
+
+
+    # =====================================================
+    # TEST MODE
+    # =====================================================
+
+    if TEST_MODE:
+
+        print(
+            "TEST MODE enabled. "
+            "Session restriction bypassed."
+        )
+
+        send_telegram(
+            "🧪 <b>XAUUSD / FOREX BOT TEST</b>\n\n"
+            "✅ Cloud Run working\n"
+            "✅ Telegram connection working\n"
+            "✅ TEST MODE enabled\n\n"
+            f"🕒 "
+            f"{now.strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
+            "<i>This is only a test message. "
+            "Not a trade signal.</i>"
+        )
+
+
+    # =====================================================
+    # NORMAL ACTIVE SESSION
+    # 1:00 PM - 10:30 PM IST
+    # =====================================================
+
+    elif not (
+        datetime.time(13, 0)
+        <= current_time
+        <= datetime.time(22, 30)
+    ):
+
+        print(
+            "Outside active session. "
+            "No scan."
+        )
+
+        return
+
+
+    # =====================================================
+    # SCAN WATCHLIST
+    # =====================================================
+
+    alerts = []
+
+    for ticker, info in WATCHLIST.items():
+
+        try:
+
+            print(
+                f"Scanning "
+                f"{info['name']}..."
+            )
+
+            df15, df1h = (
+                download_market_data(
+                    ticker
+                )
+            )
+
+            df15 = completed_candles(
+                df15,
+                now,
+                15
+            )
+
+            df1h = completed_candles(
+                df1h,
+                now,
+                60
+            )
+
+
+            # =============================================
+            # DATA CHECK
+            # =============================================
+
+            if (
+                len(df15) < 10
+                or
+                len(df1h) < 200
+            ):
+
+                print(
+                    f"Not enough data: "
+                    f"{ticker}"
+                )
+
+                continue
+
+
+            # =============================================
+            # TODAY DATA
+            # =============================================
+
+            trading_date = (
+                df15.index[-1].date()
+            )
+
+            today = df15[
+                df15.index.date
+                == trading_date
+            ]
+
+
+            # =============================================
+            # ASIAN SESSION
+            # 05:30 AM - 01:00 PM IST
+            # =============================================
+
+            asian = today[
+                (
+                    today.index.time
+                    >= datetime.time(5, 30)
+                )
+                &
+                (
+                    today.index.time
+                    < datetime.time(13, 0)
+                )
+            ]
+
+
+            if len(asian) < 4:
+
+                print(
+                    f"Asian session data "
+                    f"incomplete: {ticker}"
+                )
+
+                continue
+
+
+            asian_high = float(
+                asian["High"].max()
+            )
+
+            asian_low = float(
+                asian["Low"].min()
+            )
+
+
+            # =============================================
+            # LATEST CLOSED 15M CANDLE
+            # =============================================
+
+            candle = today.iloc[-1]
+
+            candle_time = (
+                today.index[-1]
+            )
+
+            age_minutes = (
+                now - candle_time
+            ).total_seconds() / 60
+
+
+            if age_minutes > 35:
+
+                print(
+                    f"Latest candle stale: "
+                    f"{ticker}"
+                )
+
+                continue
+
+
+            high = float(
+                candle["High"]
+            )
+
+            low = float(
+                candle["Low"]
+            )
+
+            open_price = float(
+                candle["Open"]
+            )
+
+            close = float(
+                candle["Close"]
+            )
+
+
+            # =============================================
+            # CANDLE STRENGTH
+            # =============================================
+
+            body_ratio = (
+                candle_body_ratio(
+                    candle
+                )
+            )
+
+
+            if (
+                body_ratio
+                <
+                info["min_body_ratio"]
+            ):
+
+                print(
+                    f"Weak candle: "
+                    f"{ticker}"
+                )
+
+                continue
+
+
+            # =============================================
+            # 1H TREND
+            # =============================================
+
+            trend, ema50, ema200 = (
+                get_1h_trend(
+                    df1h
+                )
+            )
+
+
+            if trend is None:
+
+                continue
+
+
+            decimals = info["dec"]
+
+            buffer_value = (
+                info["buffer"]
+            )
+
+
+            # =============================================
+            # SELL SETUP
+            # Asian High Sweep
+            # =============================================
+
+            if (
+                trend == "BEARISH"
+                and
+                high > asian_high
+                and
+                close < asian_high
+                and
+                close < open_price
+            ):
+
+                entry = round(
+                    close,
+                    decimals
+                )
+
+                stop_loss = round(
+                    high + buffer_value,
+                    decimals
+                )
+
+                risk = (
+                    stop_loss - entry
+                )
+
+
+                if risk > 0:
+
+                    tp1 = round(
+                        entry
+                        - (risk * 2),
+                        decimals
+                    )
+
+                    tp2 = round(
+                        entry
+                        - (risk * 3),
+                        decimals
+                    )
+
+                    alerts.append(
+                        create_alert(
+                            info,
+                            "SELL",
+                            candle_time,
+                            asian_high,
+                            asian_low,
+                            entry,
+                            stop_loss,
+                            tp1,
+                            tp2,
+                            risk,
+                            ema50,
+                            ema200,
+                            body_ratio,
+                        )
+                    )
+
+
+            # =============================================
+            # BUY SETUP
+            # Asian Low Sweep
+            # =============================================
+
+            elif (
+                trend == "BULLISH"
+                and
+                low < asian_low
+                and
+                close > asian_low
+                and
+                close > open_price
+            ):
+
+                entry = round(
+                    close,
+                    decimals
+                )
+
+                stop_loss = round(
+                    low - buffer_value,
+                    decimals
+                )
+
+                risk = (
+                    entry - stop_loss
+                )
+
+
+                if risk > 0:
+
+                    tp1 = round(
+                        entry
+                        + (risk * 2),
+                        decimals
+                    )
+
+                    tp2 = round(
+                        entry
+                        + (risk * 3),
+                        decimals
+                    )
+
+                    alerts.append(
+                        create_alert(
+                            info,
+                            "BUY",
+                            candle_time,
+                            asian_high,
+                            asian_low,
+                            entry,
+                            stop_loss,
+                            tp1,
+                            tp2,
+                            risk,
+                            ema50,
+                            ema200,
+                            body_ratio,
+                        )
+                    )
+
+
+        except Exception as e:
+
+            print(
+                f"Error scanning "
+                f"{ticker}: {e}"
+            )
+
+
+    # =====================================================
+    # SEND SIGNALS
+    # =====================================================
+
+    if alerts:
+
+        final_message = (
+            "\n\n"
+            "━━━━━━━━━━━━━━━━━━"
+            "\n\n"
+        ).join(alerts)
+
+        send_telegram(
+            final_message
+        )
+
+    else:
+
+        print(
+            "No valid trade setup. "
+            "Telegram signal not sent."
+        )
+
+
+# =========================================================
+# START BOT
+# =========================================================
+
+if __name__ == "__main__":
+
+    run_scanner()
