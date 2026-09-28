@@ -6,5 +6,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY xauusd_bot_v2.py .
+COPY ctrader_test.py .
 
 CMD ["python", "xauusd_bot_v2.py"]
