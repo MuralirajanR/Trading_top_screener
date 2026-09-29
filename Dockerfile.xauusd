@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY xauusd_bot_v2.py .
 COPY ctrader_test.py .
+COPY multi_pair_bot.py .
 
 CMD ["python", "xauusd_bot_v2.py"]
