@@ -1,6 +1,7 @@
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -694,28 +695,25 @@ def create_market_chart():
 
 def send_hourly_report():
 
-    utc_now = datetime.now(
-        timezone.utc
+    # India Standard Time
+    ist_now = datetime.now(
+        ZoneInfo("Asia/Kolkata")
     )
-
 
     total_5x = sum(
         data["total_5x"]
         for data in HOURLY_RESULTS.values()
     )
 
-
     total_bullish = sum(
         data["bullish_5x"]
         for data in HOURLY_RESULTS.values()
     )
 
-
     total_bearish = sum(
         data["bearish_5x"]
         for data in HOURLY_RESULTS.values()
     )
-
 
     lines = [
         "📊 TRADING_TOP — HOURLY MARKET REPORT",
@@ -724,14 +722,12 @@ def send_hourly_report():
         "",
     ]
 
-
     for symbol in WATCHLIST:
 
         emoji = EMOJIS.get(
             symbol,
             "💹",
         )
-
 
         if symbol not in HOURLY_RESULTS:
 
@@ -742,21 +738,19 @@ def send_hourly_report():
             lines.append("")
             continue
 
-
         data = HOURLY_RESULTS[symbol]
-
 
         direction = trend_icon(
             data["latest_direction"]
         )
 
-
+        # 5X+ = 0  → 👎
+        # 5X+ >= 1 → 👍
         injection_icon = (
-            "🔥"
-            if data["total_5x"] > 0
-            else "👍"
+            "👍"
+            if data["total_5x"] >= 1
+            else "👎"
         )
-
 
         lines.append(
             f"{emoji} {symbol}   "
@@ -767,10 +761,8 @@ def send_hourly_report():
             f"{injection_icon} {direction}"
         )
 
-
         # Space between every market
         lines.append("")
-
 
     lines.extend([
         "━━━━━━━━━━━━━━━━━━━━",
@@ -790,14 +782,14 @@ def send_hourly_report():
         "",
         "⏩ Next Update: 1 Hour",
         "",
-        f"🕐 {utc_now.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"🇮🇳 IST Time: "
+        f"{ist_now.strftime('%d-%m-%Y | %I:%M %p')}",
         "",
-        "🎯 TRADE SMART | STAY AHEAD",
+        "🔥 SPOT THE VOLUME | CATCH THE MOVE",
+        "— TRADING_IN_THE_TOP 📈🎯⚡",
     ])
 
-
     message = "\n".join(lines)
-
 
     print("")
     print("==========================================")
@@ -805,14 +797,11 @@ def send_hourly_report():
     print("==========================================")
     print(message)
 
-
-    # Send decorated text report
+    # Send Telegram text report
     send_telegram(message)
-
 
     # Create + send chart
     chart_path = create_market_chart()
-
 
     if chart_path:
 
@@ -821,15 +810,15 @@ def send_hourly_report():
             "🔝 Highest 5M Volume Ratio by Market\n"
             "🎯 Dashed line = 5X Injection Level\n\n"
             f"🔥 Total 5X+: {total_5x}\n"
-            "👍 Scanner Status: ACTIVE"
+            "👍 Scanner Status: ACTIVE\n\n"
+            "🔥 SPOT THE VOLUME | CATCH THE MOVE\n"
+            "— TRADING_IN_THE_TOP 📈🎯⚡"
         )
-
 
         send_telegram_photo(
             chart_path,
             caption,
         )
-
 
 # =========================================================
 # MESSAGE HANDLER
